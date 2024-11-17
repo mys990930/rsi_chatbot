@@ -1,7 +1,10 @@
 from pykrx import stock
 from datetime import date, timedelta
-from indicators import indicators_name # 추후에 indicators_name으로 지표 명을 참고할 생각입니다.
 import numpy as np
+from ta import add_all_ta_features
+from ta.utils import dropna
+df = None
+recent_day = date(1,1,1)
 
 def get_stock_price(stock_code: str) -> float:
     today = date.today()
@@ -17,9 +20,28 @@ def is_buyable_price(ticker_code: str, indic_name: str) -> int:
     #1: buy signal, 0, 유보 -1: Sell signal
     signal = 0
     if indic_name == "RSI":
-        signal = evaluate_RSI(ticker_code = ticker_code, n_days = 14) # 임시로 14일동안 보겠습니다. 추후 유동적인 변수로 변경 가능
-
+        signal = evaluate_RSI(ticker_code = ticker_code)
+    elif indic_name == "MACD" :
+        signal = evaluate_MACD(ticker_code = ticker_code)
+    elif indic_name == "OBV" :
+        signal = evaluate_OBV(ticker_code = ticker_code)
     return signal
+
+def get_pykrx_data(ticker_code : str) :
+    global recent_day
+    today = date.today()
+    if recent_day >= today :
+        return
+    
+    pastday = today - timedelta(days = 365)
+    pastdayStr = pastday.strftime("%Y%m%d")
+    todayStr = today.strftime("%Y%m%d")
+    
+    data = dropna(stock.get_market_ohlcv(pastdayStr, todayStr, ticker_code))
+    global df
+    df = add_all_ta_features(data, open="시가", high="고가", low="저가", close="종가", volume="거래량")
+    recent_day = today
+    print("data update complete")
 
 def get_signal_string(signal: int) -> str:
     if signal == 0: return "유보 권유"
@@ -36,31 +58,75 @@ RSI : 과거 n일 동안의 전날대비 상승일, 하락일의 비율.
 
 parameters
 - ticker_code   : str, 종목코드.
-- n_days        : int, 금일부터 얼마나 과거까지 실필 것인지 결정.
 '''
-def evaluate_RSI(ticker_code : str, n_days : int) -> int :
-    if n_days <= 0 :
-        print(f"유효하지 않은 일수 : {n_days}")
-        return 0
+def evaluate_RSI(ticker_code : str) -> int :
+    get_pykrx_data(ticker_code) # 자료 최신화
     
-    today = date.today()
-    todayStr = today.strftime("%Y%m%d")
-    pastday = today-timedelta(n_days)
-    pastdayStr = pastday.strftime("%Y%m%d")
-    df = stock.get_market_ohlcv(pastdayStr, todayStr, ticker_code)
-    change_per_day_df = df.iloc[:]['등락률']
-    change_per_day = change_per_day_df.to_numpy()
-    minus = change_per_day[change_per_day < 0] * -1
-    plus = change_per_day[change_per_day > 0]
-    
-    RSI = np.mean(plus) / (np.mean(plus) + np.mean(minus)) * 100
+    global df
+    RSI = df['momentum_rsi']
     
     signal = 0
-    if RSI >= 70 : signal = 1
-    elif RSI <= 30 : signal = -1
+    if RSI.iloc[-1] >= 70 : signal = 1
+    elif RSI.iloc[-1] <= 30 : signal = -1
     '''
     Welles Wilder는 70과 30을 기준으로 했지만
     70을 넘었다가 다시 하향돌파하면 매도, 30밑으로 빠졌다가 상향돌파하면 매수
     50 상향돌파시 매수, 하향돌파시 매도 등 다양한 응용 전략이 있다.
     '''
+    return signal
+
+'''
+MACD를 통해 판단
+주가가 큰 변화가 없을 때도 MACD는 계속 변화하기 때문에, 사소한 잡음에 대한 대처가 필요함.
+MCAD가 시그널을 상향돌파 -> 매수 신호
+MACD가 시그널을 하향돌파 -> 매도 신호 
+
+parameters
+- ticker_code   : str, 종목 코드
+'''
+def evaluate_MACD(ticker_code : str) -> int :
+    get_pykrx_data(ticker_code) # 자료 최신화
+    
+    atr = df[-30:]['volatility_atr']
+    atr_threshold = atr.mean() # 최근 30일간 변동성 평균
+    macd_diff = df['trend_macd_diff']
+    macd = df['trend_macd']
+    
+    signal = 0
+    # 오실레이터가 0을 상향돌파(골든크로스), 변동성(상승폭)이 평균을 상회할 경우(잡음 필터링), 매수
+    if macd_diff.iloc[-1] > 0 and macd_diff.iloc[-2] < 0 and atr.iloc[-1] >= atr_threshold :
+        signal = 1
+    # 오실레이터가 0을 하향돌파(데드크로스), 매도
+    elif macd_diff.iloc[-1] < 0 and macd_diff.iloc[-2] > 0 and atr.iloc[-1] >= atr_threshold : 
+        signal = -1
+    # macd가 0을 상향돌파, 매수
+    elif macd.iloc[-1] > 0 and macd.iloc[-2] < 0 and atr.iloc[-1] >= atr_threshold :
+        signal = 1
+    # macd가 0을 하향돌파, 매도
+    elif macd.iloc[-1] < 0 and macd.iloc[-2] > 0 and atr.iloc[-1] >= atr_threshold :
+        signal = -1
+    
+    # 이외에도 오실레이터가 전날보다 상승/하락한 경우 등을 조건에 추가할 수 있습니다.
+    return signal
+
+'''
+OBV를 통해 판단.
+거래량 증가 -> 매수 신호(가격 상승 예상)
+거래량 하락 -> 매도 신호(가격 하락 예상)
+
+parameters
+- ticker_code   : str, 종목 코드
+'''
+def evaluate_OBV(ticker_code : str) -> int :
+    get_pykrx_data(ticker_code) # 자료 최신화
+    
+    obv = df['volume_obv']
+    
+    signal = 0
+    # 거래량 증가
+    if obv.iloc[-1] > obv.iloc[-2] :
+        signal = 1
+    elif obv.iloc[-1] < obv.iloc[-2] :
+        signal = -1
+    
     return signal
