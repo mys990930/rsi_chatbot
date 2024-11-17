@@ -18,9 +18,16 @@ def is_buyable_price(ticker_code: str, indic_name: str) -> int:
     signal = 0
     if indic_name == "RSI":
         signal = evaluate_RSI(ticker_code = ticker_code, n_days = 14) # 임시로 14일동안 보겠습니다. 추후 유동적인 변수로 변경 가능
-    
+
     return signal
 
+def get_signal_string(signal: int) -> str:
+    if signal == 0: return "유보 권유"
+    elif signal == 1: return "매수 권유"
+    elif signal == -1: return "매도 권유"
+    else:
+        print("signal integer invalid")
+        return "유보"
 '''
 RSI를 이용해 매수와 매도, 유보를 판단하는 함수.
 RSI : 과거 n일 동안의 전날대비 상승일, 하락일의 비율.

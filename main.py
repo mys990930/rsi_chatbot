@@ -113,10 +113,16 @@ async def print_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     for alert in user.stock_alerts.values():
         stock_name = db.get_stock_name(alert.stock_code)
         stock_price = get_stock_price(str(alert.stock_code))
-        await update.message.reply_text(f"""[{stock_name}] \n
-{', '.join(map(lambda x: str(x), alert.indicators))} \n
-[종가] : {stock_price}
-""")
+        indicators_info = "\n".join(
+            f"[{indicator}] - 매수/매도 신호: {get_signal_string(is_buyable_price(str(alert.stock_code), str(indicator)))}"
+            for indicator in alert.indicators
+        )
+        text = f"""[{stock_name}] 종목 정보:
+[종가]: {stock_price}
+지표 정보:
+{indicators_info}
+    """
+        await update.message.reply_text(text)
     return ConversationHandler.END
 
 async def modify_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -176,11 +182,14 @@ async def modify_alert_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
     indicator_name = update.message.text
     try:
         user.stock_alerts[user.last_picked_alert_code].delete_indicator(indicator_name)
+        if len(user.stock_alerts[user.last_picked_alert_code].indicators) == 0:
+            del user.stock_alerts[user.last_picked_alert_code]
         await update.message.reply_text(f"더이상 [{stock_name}] 종목의 [{indicator_name}] 지표 알림을 수신하지 않습니다.")
         return ConversationHandler.END
-    except:
-        await update.message.reply_text(f"잘못된 지표가 선택되었습니다. 다시 입력해주세요.")
-        return MODIFY_ALERT_4
+    finally: pass
+    # except:
+    #     await update.message.reply_text(f"잘못된 지표가 선택되었습니다. 다시 입력해주세요.")
+    #     return MODIFY_ALERT_4
 
 async def delete_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = db.user_db.get_user(update.effective_sender.id)
@@ -210,7 +219,7 @@ async def send_alerts(bot: Bot, is_market_start):
         else:
             await bot.sendMessage(chat_id=user.user_id,
                                   text="장 마감 시 알림을 보내드립니다.")
-        for alert in user.stock_alerts:
+        for alert in user.stock_alerts.values():
             stock_name = db.get_stock_name(alert.stock_code)
             text = f"현재 [{stock_name}]의 주가: {get_stock_price(alert.stock_code)}원"
             for indicator in alert.indicators:
@@ -230,7 +239,7 @@ async def print_alerts_now(update: Update, bot: Bot) -> int:
         stock_name = db.get_stock_name(alert.stock_code)
         stock_price = get_stock_price(str(alert.stock_code))
         indicators_info = "\n".join(
-            f"[{indicator}] - 매수/매도 신호: {is_buyable_price(str(alert.stock_code), str(indicator))}"
+            f"[{indicator}] - 매수/매도 신호: {get_signal_string(is_buyable_price(str(alert.stock_code), str(indicator)))}"
             for indicator in alert.indicators
         )
         text = f"""[{stock_name}] 종목 정보:
@@ -246,7 +255,8 @@ async def alarm(bot: Bot):
         now = datetime.datetime.now()
         if now.hour == 9 and now.minute == 0 and now.second == 10:
             await send_alerts(bot, True)
-        elif now.hour == 15 and now.minute == 30 and now.second == 0:
+        #elif now.hour == 15 and now.minute == 30 and now.second == 0:
+        elif now.hour == 20 and now.minute == 13 and now.second == 0:
             await send_alerts(bot, False)
         await asyncio.sleep(1)
 
@@ -318,6 +328,7 @@ def main() -> None:
     application.add_handler(conv_handler)
     # Run the bot until the user presses Ctrl-C
     loop.create_task(alarm(bot))
+    print("Bot started")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
