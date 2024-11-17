@@ -9,6 +9,9 @@ from telegram.ext import (
 )
 import asyncio
 import datetime
+# API_TOKEN 이용을 위해 .env 사용
+from dotenv import load_dotenv
+import os
 
 from stock_data_provider import *
 from models import User, StockAlert
@@ -16,6 +19,9 @@ import db
 
 SELECT, NEW_ALERT, PRINT_ALERTS, MODIFY_ALERT, CANCEL, \
     NEW_ALERT_2, MODIFY_ALERT_2, MODIFY_ALERT_3, MODIFY_ALERT_4 = range(9)
+    
+# 테스트를 위해 현황 조회 기능을 만듭니다.
+SHOW_NOW = 100
 
 reply_keyboard = [
     ["새 종목 알림 등록하기", "등록 종목 알림 정보 출력"],
@@ -27,6 +33,7 @@ indicator_keyboard = [
     ["취소"],
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+load_dotenv()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     is_first_user = True
@@ -60,6 +67,10 @@ async def select_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     elif text == "기존 등록 알림 수정/삭제하기":
         await update.message.reply_text(f"기존 등록 알림을 수정합니다. 알림을 수정하고자 하는 종목의 이름을 정확하게 입력해주세요.")
         return MODIFY_ALERT
+    elif text == "show_now" : # 디버그를 위해 즉시 지표를 조회합니다.
+        await update.message.reply_text("종목 정보를 즉시 조회합니다.")
+        await print_alerts_now(update, context.bot)
+        return SHOW_NOW
     else:
         await update.message.reply_text(f"취소되었습니다. 다시 시작하시려면 /start 를 입력해 시작해주세요.")
         return CANCEL
@@ -101,7 +112,11 @@ async def print_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text(f"현재 등록된 종목별 알림은 다음과 같습니다:")
     for alert in user.stock_alerts.values():
         stock_name = db.get_stock_name(alert.stock_code)
-        await update.message.reply_text(f"[{stock_name}]: {', '.join(map(lambda x: str(x), alert.indicators))}")
+        stock_price = get_stock_price(str(alert.stock_code))
+        await update.message.reply_text(f"""[{stock_name}] \n
+{', '.join(map(lambda x: str(x), alert.indicators))} \n
+[종가] : {stock_price}
+""")
     return ConversationHandler.END
 
 async def modify_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -208,6 +223,24 @@ async def send_alerts(bot: Bot, is_market_start):
                     text += f"\n[{indicator}]지표에 따르면 매도하기 좋은 시점입니다."
             await bot.sendMessage(chat_id=user.user_id, text=text)
 
+async def print_alerts_now(update: Update, bot: Bot) -> int:
+    user = db.user_db.get_user(update.effective_sender.id)
+    await bot.sendMessage(chat_id=user.user_id, text="현재 등록된 모든 종목의 정보를 출력합니다.")
+    for alert in user.stock_alerts.values():
+        stock_name = db.get_stock_name(alert.stock_code)
+        stock_price = get_stock_price(str(alert.stock_code))
+        indicators_info = "\n".join(
+            f"[{indicator}] - 매수/매도 신호: {is_buyable_price(str(alert.stock_code), str(indicator))}"
+            for indicator in alert.indicators
+        )
+        text = f"""[{stock_name}] 종목 정보:
+[종가]: {stock_price}
+지표 정보:
+{indicators_info}
+"""
+        await bot.sendMessage(chat_id=user.user_id, text=text)
+
+
 async def alarm(bot: Bot):
     while True:
         now = datetime.datetime.now()
@@ -220,7 +253,7 @@ async def alarm(bot: Bot):
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
-    token = "7279521761:AAHRgQnuAJ-uQHqhV-trCrhceZG4nw4hcC4"
+    token = os.environ.get('API_TOKEN')
     bot = Bot(token)
     application = Application.builder().token(token).build()
 
@@ -273,6 +306,11 @@ def main() -> None:
                     filters.Regex(""), done
                 )
             ],
+            SHOW_NOW : [
+                MessageHandler(
+                    filters.Regex(""), print_alerts_now
+                )
+            ]
         },
         fallbacks=[MessageHandler(filters.Regex("^취소"), done)],
     )
