@@ -43,6 +43,13 @@ def get_pykrx_data(ticker_code : str) :
     recent_day = today
     print("data update complete")
 
+def get_signal_string(signal: int) -> str:
+    if signal == 0: return "유보 권유"
+    elif signal == 1: return "매수 권유"
+    elif signal == -1: return "매도 권유"
+    else:
+        print("signal integer invalid")
+        return "유보"
 '''
 RSI를 이용해 매수와 매도, 유보를 판단하는 함수.
 RSI : 과거 n일 동안의 전날대비 상승일, 하락일의 비율.
